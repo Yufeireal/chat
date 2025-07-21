@@ -140,7 +140,7 @@ impl SigninUser {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-
+    use crate::test_util::get_test_pool;
     use super::*;
     use anyhow::Result;
     use sqlx_db_tester::TestPg;
@@ -155,35 +155,25 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_verify_user_should_work() -> Result<()> {
-        let tdb = TestPg::new("postgres://postgres:postgres@localhost:5432".to_string(), Path::new("../migrations"));
-        let pool = tdb.get_pool().await;
-        let email = "tchen@acme.org";
-        let name = "Tyr Chen";
-        let password = "hunter42";
-        let ws = "none";
-        let create_input = CreateUser::new(ws, name, email, password);
+        let (_tdb, pool) = get_test_pool(None).await;
+        let create_input = CreateUser::new("none", "Tian Chen", "tyr@acme.org", "hunter42");
         let user = User::create(&create_input, &pool).await?;
-        assert_eq!(user.email, email);
-        assert_eq!(user.fullname, name);
-        let user = User::find_by_email(email, &pool).await?;
+        assert_eq!(user.email, create_input.email);
+        assert_eq!(user.fullname, create_input.fullname);
+        let user = User::find_by_email(&create_input.email, &pool).await?;
         assert!(user.is_some());
         let user = user.unwrap();
-        assert_eq!(user.email, email);
-        assert_eq!(user.fullname, name);
-        let signin_input = SigninUser::new(email, password);
+        assert_eq!(user.email, create_input.email);
+        assert_eq!(user.fullname, create_input.fullname);
+        let signin_input = SigninUser::new(&create_input.email, &create_input.password);
         let user = User::verify(&signin_input, &pool).await?;
         assert!(user.is_some());
         Ok(())
     }
     #[tokio::test]
     async fn create_duplicate_user_should_fail() -> Result<()> {
-        let tdb = TestPg::new("postgres://postgres:postgres@localhost:5432".to_string(), Path::new("../migrations"));
-        let pool = tdb.get_pool().await;
-        let email = "tchen@acme.org";
-        let name = "Tyr Chen";
-        let password = "hunter42";
-        let ws = "none";
-        let create_input = CreateUser::new(ws, name, email, password);
+        let (_tdb, pool) = get_test_pool(None).await;
+        let create_input = CreateUser::new("acme", "Tian Chen", "tyr@acme.org", "hunter42");
         User::create(&create_input, &pool).await?;
         let ret = User::create(&create_input, &pool).await;
         match ret {
