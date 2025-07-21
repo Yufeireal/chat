@@ -40,6 +40,7 @@ pub(crate) struct AppStateInner {
 pub async fn get_router(config: AppConfig) -> Result<Router, AppError> {
     let state = AppState::try_new(config).await?;
     let api = Router::new()
+        .route("/users", get(list_chat_users_handler))
         .route("/chat", get(list_chat_handler).post(create_chat_handler))
         .route(
             "/chat/{{:id}}",
@@ -96,7 +97,9 @@ impl AppState {
         use sqlx_db_tester::TestPg;
         let dk = DecodingKey::load(&config.auth.pk).context("load pk failed")?;
         let ek = EncodingKey::load(&config.auth.sk).context("load sk failed")?;
-        let tdb = TestPg::new(config.server.db_url.clone(), Path::new("../migrations"));
+        let post = config.server.db_url.rfind('/').expect("invalid db url");
+        let server_url = &config.server.db_url[..post];
+        let tdb = TestPg::new(server_url.to_string(), Path::new("../migrations"));
         let pool = tdb.get_pool().await;
         let state = Self {
             inner: Arc::new(AppStateInner { config, dk: dk, ek: ek, pool })

@@ -4,12 +4,13 @@ use argon2::{password_hash::{rand_core::OsRng, SaltString}, Argon2, PasswordHash
 use sqlx::PgPool;
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, User};
+use crate::{AppError, ChatUser, User, Workspace};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUser {
     pub fullname: String,
     pub email: String,
+    pub workspace: String,
     pub password: String,
 }
 
@@ -21,7 +22,7 @@ pub struct SigninUser {
 
 impl User {
     pub async fn find_by_email(email: &str, pool: &PgPool) -> Result<Option<Self>, AppError> {
-        let user = sqlx::query_as("SELECT id, fullname, email, created_at FROM users WHERE email = $1")
+        let user = sqlx::query_as("SELECT id, ws_id, fullname, email, created_at FROM users WHERE email = $1")
             .bind(email)
             .fetch_optional(pool)
             .await?;
@@ -29,23 +30,32 @@ impl User {
     }
 
     pub async fn create(input: &CreateUser, pool: &PgPool) -> Result<Self, AppError> {
-        let password_hash = hash_password(&input.password)?;
         let user = Self::find_by_email(&input.email, pool).await?;
         if user.is_some() {
             return Err(AppError::EmailAlreadyExists(input.email.clone()));
         }
-        let user = sqlx::query_as(
+        let ws = match Workspace::find_by_name(&input.workspace, pool).await? {
+            Some(ws) => ws,
+            None => Workspace::create(&input.workspace, 0, pool).await?
+        };
+        let password_hash = hash_password(&input.password)?;
+        let user: User = sqlx::query_as(
             r#"
-            INSERT INTO users (email, fullname, password_hash)
-            VALUES ($1, $2, $3)
-            RETURNING id, fullname, email, created_at
+            INSERT INTO users (ws_id, email, fullname, password_hash)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, ws_id, fullname, email, created_at
             "#,
         )
+        .bind(ws.id)
         .bind(&input.email)
         .bind(&input.fullname)
         .bind(&password_hash)
         .fetch_one(pool)
         .await?;
+
+        if ws.owner_id == 0 {
+            ws.update_owner(user.id as u64, pool).await?;
+        }
         Ok(user)
     }
     
@@ -53,7 +63,7 @@ impl User {
         input: &SigninUser,
         pool: &PgPool,   
     ) -> Result<Option<Self>, AppError> {
-        let user: Option<Self> = sqlx::query_as("SELECT id, fullname, email, created_at, password_hash FROM users WHERE email = $1")
+        let user: Option<Self> = sqlx::query_as("SELECT id, ws_id, fullname, email, created_at, password_hash FROM users WHERE email = $1")
             .bind(&input.email)
             .fetch_optional(pool)
             .await?;
@@ -70,6 +80,10 @@ impl User {
             None => Ok(None)
         }
     }
+}
+
+impl ChatUser {
+    // pub async fn fetch_all(user: &User)
 }
 
 fn hash_password(password: &str) -> Result<String, AppError> {
@@ -92,6 +106,7 @@ impl User {
 
         Self {
             id,
+            ws_id: 0,
             fullname: fullname.to_string(),
             email: email.to_string(),
             password_hash: None,
@@ -102,9 +117,10 @@ impl User {
 
 #[cfg(test)]
 impl CreateUser {
-    pub fn new(fullname: &str, email: &str, password: &str) -> Self {
+    pub fn new(ws: &str, fullname: &str, email: &str, password: &str) -> Self {
         Self {
             fullname: fullname.to_string(),
+            workspace: ws.to_string(),
             email: email.to_string(),
             password: password.to_string(),
         }
@@ -144,7 +160,8 @@ mod tests {
         let email = "tchen@acme.org";
         let name = "Tyr Chen";
         let password = "hunter42";
-        let create_input = CreateUser::new(name, email, password);
+        let ws = "none";
+        let create_input = CreateUser::new(ws, name, email, password);
         let user = User::create(&create_input, &pool).await?;
         assert_eq!(user.email, email);
         assert_eq!(user.fullname, name);
@@ -165,7 +182,8 @@ mod tests {
         let email = "tchen@acme.org";
         let name = "Tyr Chen";
         let password = "hunter42";
-        let create_input = CreateUser::new(name, email, password);
+        let ws = "none";
+        let create_input = CreateUser::new(ws, name, email, password);
         User::create(&create_input, &pool).await?;
         let ret = User::create(&create_input, &pool).await;
         match ret {
