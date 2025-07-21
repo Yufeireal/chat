@@ -7,6 +7,7 @@ mod workspace;
 mod chat;
 
 pub use user::{CreateUser, SigninUser};
+pub use chat::CreateChat;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq)]
 pub struct User {
